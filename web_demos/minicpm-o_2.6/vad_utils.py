@@ -27,12 +27,12 @@ class VadOptions(NamedTuple):
       speech_pad_ms: Final speech chunks are padded by speech_pad_ms each side
     """
 
-    # threshold: float = 0.3 # rep 0.5
-    # min_speech_duration_ms: int = 250 
-    # max_speech_duration_s: float = float("inf")
-    # min_silence_duration_ms: int = 2000 
-    # window_size_samples: int = 1024
-    # speech_pad_ms: int = 600 # rep 400
+    # threshold: float = 0.3 # rep 0.5；用于判断音频输入开始和结束，当概率大于阈值时，音频输入开始
+    # min_speech_duration_ms: int = 250；音频chunk的最小持续时间，最后的一个chunk如果小于此值会被丢弃
+    # max_speech_duration_s: float = float("inf")；音频chunk的最大持续时间，超过此值的chunk会被切分
+    # min_silence_duration_ms: int = 2000；两个chunk之间的最小silent时间，如果小于此值，则不会切分
+    # window_size_samples: int = 1024；音频分析时的窗口大小，单次推理时的音频数据帧数
+    # speech_pad_ms: int = 600 # rep 400；语音片段两端填充时间
 
     threshold: float = 0.7 # gw: 0.3 # rep 0.5
     min_speech_duration_ms: int = 128  # original & gw: 250
@@ -51,9 +51,9 @@ class SileroVADModel:
             ) from e
 
         opts = onnxruntime.SessionOptions()
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 1
-        opts.log_severity_level = 4
+        opts.inter_op_num_threads = 1  # 设置线程间并行数
+        opts.intra_op_num_threads = 1  # 设置线程内并行数
+        opts.log_severity_level = 4  # 设置日志级别
 
         self.session = onnxruntime.InferenceSession(
             path,
@@ -68,7 +68,7 @@ class SileroVADModel:
 
     def __call__(self, x, state, sr: int):
         if len(x.shape) == 1:
-            x = np.expand_dims(x, 0)
+            x = np.expand_dims(x, 0)  # 如果输入是一维，则扩展为二维，增加batch size维度
         if len(x.shape) > 2:
             raise ValueError(
                 f"Too many dimensions for input audio chunk {len(x.shape)}"
@@ -79,11 +79,11 @@ class SileroVADModel:
         h, c = state
 
         ort_inputs = {
-            "input": x,
+            "input": x,  # 输入音频数据
             #"state": np.concatenate((h, c), axis=0),
-            "h": h,
-            "c": c,
-            "sr": np.array(sr, dtype="int64"),
+            "h": h,  # LSTM隐藏状态
+            "c": c,  # LSTM单元状态
+            "sr": np.array(sr, dtype="int64"),  # 采样率
         }
 
         out, h, c = self.session.run(None, ort_inputs)
@@ -92,7 +92,7 @@ class SileroVADModel:
         return out, state
 
 
-@functools.lru_cache
+@functools.lru_cache  # 缓存模型实例，提高性能
 def get_vad_model():
     """Returns the VAD model instance."""
     path = os.path.join(os.path.dirname(__file__), "silero_vad.onnx")
@@ -117,13 +117,15 @@ def get_speech_timestamps(
     if vad_options is None:
         vad_options = VadOptions(**kwargs)
 
-    threshold = vad_options.threshold
-    min_speech_duration_ms = vad_options.min_speech_duration_ms
-    max_speech_duration_s = vad_options.max_speech_duration_s
-    min_silence_duration_ms = vad_options.min_silence_duration_ms
-    window_size_samples = vad_options.window_size_samples
-    speech_pad_ms = vad_options.speech_pad_ms
+    # 从VAD选项中获取配置参数
+    threshold = vad_options.threshold   # 语音检测阈值
+    min_speech_duration_ms = vad_options.min_speech_duration_ms  # 最小语音持续时间
+    max_speech_duration_s = vad_options.max_speech_duration_s  # 最大语音持续时间
+    min_silence_duration_ms = vad_options.min_silence_duration_ms  # 最小静音持续时间
+    window_size_samples = vad_options.window_size_samples  # 窗口大小
+    speech_pad_ms = vad_options.speech_pad_ms  # 语音片段两端填充时间
 
+    # 将时间参数转换为采样点数
     if window_size_samples not in [512, 1024, 1536]:
         warnings.warn(
             "Unusual window_size_samples! Supported window_size_samples:\n"
@@ -138,7 +140,7 @@ def get_speech_timestamps(
         - window_size_samples
         - 2 * speech_pad_samples
     )
-    min_silence_samples = sampling_rate * min_silence_duration_ms / 1000 # 在每个silent需要等 min_silence_duration_ms 后才结束，
+    min_silence_samples = sampling_rate * min_silence_duration_ms / 1000  # 在每个silent需要等 min_silence_duration_ms 后才结束，
     min_silence_samples_at_max_speech = sampling_rate * 98 / 1000 # 0.098s # need to adjust？
 
     audio_length_samples = len(audio)
@@ -146,9 +148,10 @@ def get_speech_timestamps(
     # import pdb
     # pdb.set_trace()
 
-    model = get_vad_model()
-    state = model.get_initial_state(batch_size=1)
+    model = get_vad_model()  # 获取VAD模型
+    state = model.get_initial_state(batch_size=1)  # 初始化LSTM模型初始状态
 
+    # 按窗口处理音频，获取每个窗口的语音概率
     speech_probs = []
     #print("audio_length_samples ", audio_length_samples, ", window_size_samples ", window_size_samples)
     for current_start_sample in range(0, audio_length_samples, window_size_samples):
@@ -226,17 +229,17 @@ def get_speech_timestamps(
     if (
         current_speech
         and (audio_length_samples - current_speech["start"]) > min_speech_samples
-    ):
+    ):  # 处理最后一个语音片段
         current_speech["end"] = audio_length_samples
         speeches.append(current_speech)
 
     # pad 多少ms，每个中间都会不足平分
     for i, speech in enumerate(speeches):
-        if i == 0:
+        if i == 0:  # 处理第一个语音片段
             speech["start"] = int(max(0, speech["start"] - speech_pad_samples))
-        if i != len(speeches) - 1:
+        if i != len(speeches) - 1:  # 处理中间的语音片段
             silence_duration = speeches[i + 1]["start"] - speech["end"]
-            if silence_duration < 2 * speech_pad_samples:
+            if silence_duration < 2 * speech_pad_samples:  # 如果两个片段之间的silent时间小于2倍的speech_pad_samples，平均分配间隔
                 speech["end"] += int(silence_duration // 2)
                 speeches[i + 1]["start"] = int(
                     max(0, speeches[i + 1]["start"] - silence_duration // 2)
@@ -248,12 +251,14 @@ def get_speech_timestamps(
                 speeches[i + 1]["start"] = int(
                     max(0, speeches[i + 1]["start"] - speech_pad_samples)
                 )
-        else:
+        else:  # 处理最后一个语音片段
             speech["end"] = int(
                 min(audio_length_samples, speech["end"] + speech_pad_samples)
             )
     return speeches
 
+
+# 基于get_speech_timestamps的输出，重新将chunks拼接为整个音频(因为在每个chunk前后存在pad等操作)
 def collect_chunks(audio: np.ndarray, chunks: List[dict]) -> np.ndarray:
     """Collects and concatenates audio chunks."""
     if not chunks:
@@ -265,35 +270,35 @@ def collect_chunks(audio: np.ndarray, chunks: List[dict]) -> np.ndarray:
 def run_vad(ori_audio, sr, vad_options=None):
     _st = time.time()
     try:
-        audio = np.frombuffer(ori_audio, dtype=np.int16)
-        audio = audio.astype(np.float32) / 32768.0
-        sampling_rate = 16000
+        audio = np.frombuffer(ori_audio, dtype=np.int16)  # 将字节类型的音频数据转换为int16类型
+        audio = audio.astype(np.float32) / 32768.0  # 将音频数据转换为float32类型，并进行归一化，[-1, 1]
+        sampling_rate = 16000  # 重采样
         if sr != sampling_rate:
             audio = librosa.resample(audio, orig_sr=sr, target_sr=sampling_rate)
         # print('audio.encode.shape: {}'.format(audio.shape))
         if vad_options is None:
-            vad_options = VadOptions()
+            vad_options = VadOptions()  # 初始化VAD模型配置
 
         # 确保传递给 get_speech_timestamps 的是 VadOptions 实例
-        speech_chunks = get_speech_timestamps(audio, vad_options=vad_options)
+        speech_chunks = get_speech_timestamps(audio, vad_options=vad_options)  # 获取语音分片结果
         # print(speech_chunks)
-        audio = collect_chunks(audio, speech_chunks)
+        audio = collect_chunks(audio, speech_chunks)  # 收集语音分片后数据
         # print(audio.shape)
-        duration_after_vad = audio.shape[0] / sampling_rate
+        duration_after_vad = audio.shape[0] / sampling_rate  # 计算处理后音频时长
 
         # print('audio.decode.shape: {}'.format(audio.shape))
         if sr != sampling_rate:
             # resample to original sampling rate
-            vad_audio = librosa.resample(audio, orig_sr=sampling_rate, target_sr=sr)
+            vad_audio = librosa.resample(audio, orig_sr=sampling_rate, target_sr=sr)  # 重采样回原采样率
         else:
             vad_audio = audio
-        vad_audio = np.round(vad_audio * 32768.0).astype(np.int16)
+        vad_audio = np.round(vad_audio * 32768.0).astype(np.int16)  # 转换回int16格式
         
         # 这个round会有一定的误差
 
-        vad_audio_bytes = vad_audio.tobytes()
+        vad_audio_bytes = vad_audio.tobytes()  # 将处理后的音频数据转换为字节类型
 
-        return duration_after_vad, vad_audio_bytes, round(time.time() - _st, 4)
+        return duration_after_vad, vad_audio_bytes, round(time.time() - _st, 4)  # 返回处理后音频时长、音频数据、处理时间
     except Exception as e:
         msg = f"[asr vad error] audio_len: {len(ori_audio)/(sr*2):.3f} s, trace: {traceback.format_exc()}"
         print(msg)
