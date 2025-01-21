@@ -55,7 +55,7 @@ logger = setup_logger()
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--port', type=int , default=32550)
-ap.add_argument('--model', type=str , default="openbmb/MiniCPM-o-2_6", help="huggingface model name or local path")
+ap.add_argument('--model', type=str , default="~/weights/MiniCPM-o-2_6", help="huggingface model name or local path")
 args = ap.parse_args()
 
 
@@ -63,14 +63,14 @@ class StreamManager:
     def __init__(self):
         self.uid = None
 
-        self.is_streaming_complete = threading.Event()
-        self.conversation_started = threading.Event()
-        self.last_request_time = None
-        self.last_stream_time = None
+        self.is_streaming_complete = threading.Event()  # 用于标识是否完成流式生成
+        self.conversation_started = threading.Event()  # 用于标识会话是否开始
+        self.last_request_time = None  # 用于记录上次请求时间
+        self.last_stream_time = None  # 用于记录上次流式生成时间
         self.timeout = 900  # seconds timeout
         self.stream_timeout = 3  # seconds no stream
         self.num_stream = 0
-        self.stream_started = False
+        self.stream_started = False  # 流式推理开始
         self.stop_response = False
 
         # VAD settings
@@ -95,9 +95,9 @@ class StreamManager:
         with torch.no_grad():
             self.minicpmo_model = AutoModel.from_pretrained(self.minicpmo_model_path, trust_remote_code=True, torch_dtype=self.target_dtype, attn_implementation='sdpa')
         self.minicpmo_tokenizer = AutoTokenizer.from_pretrained(self.minicpmo_model_path, trust_remote_code=True)
-        self.minicpmo_model.init_tts()
+        self.minicpmo_model.init_tts()  # 初始化tts模块
         # self.minicpmo_model.tts.float()
-        self.minicpmo_model.to(self.device).eval()
+        self.minicpmo_model.to(self.device).eval()  # 将模型移动到指定设备并设置为评估模式
 
         self.ref_path_video_default = "assets/ref_audios/video_default.wav"
         self.ref_path_default = "assets/ref_audios/default.wav"
@@ -113,7 +113,7 @@ class StreamManager:
         
         self.all_start_time = time.time()
         self.session_id = 233
-        self.sys_prompt_flag = False
+        self.sys_prompt_flag = False  # 表示是否设置了系统提示
         self.vad_time = 0
         self.ls_time = 0
         self.msg_type = 1
@@ -124,14 +124,14 @@ class StreamManager:
         self.server_wait = True
         
         self.past_session_id = 0
-        self.sys_prompt_init(0)
+        self.sys_prompt_init(0)  # 基于msg_type设置系统提示，system_prompt，会将系统提示词进行prefill操作
         self.session_id += 1
         
         
     def start_conversation(self):
         logger.info(f"uid {self.uid}: new conversation started.")
-        self.conversation_started.set()
-        self.stop_response = False
+        self.conversation_started.set()  # 设置会话开始标志
+        self.stop_response = False  # 停止响应标签设置为False
 
     def update_last_request_time(self):
         self.last_request_time = time.time()
@@ -161,11 +161,11 @@ class StreamManager:
           
     def reset(self):
         logger.info("reset")
-        self.is_streaming_complete.clear()
+        self.is_streaming_complete.clear()  # 清除状态设置
         self.conversation_started.clear()
         self.last_request_time = None
         self.last_stream_time = None
-        self.audio_buffer_raw = bytearray()
+        self.audio_buffer_raw = bytearray()  # 清空音频缓冲区
         self.num_stream = 0
         self.stream_started = False
         self.stop_response = False
@@ -174,7 +174,7 @@ class StreamManager:
         # clear model
         self.clear()
 
-    def merge_wav_files(self, input_bytes_list, output_file):
+    def merge_wav_files(self, input_bytes_list, output_file):  # 合并多个wav文件
         with wave.open(io.BytesIO(input_bytes_list[0]), 'rb') as wav:
             params = wav.getparams()
             n_channels, sampwidth, framerate, n_frames, comptype, compname = params
@@ -192,19 +192,19 @@ class StreamManager:
     
     def is_timed_out(self):
         if self.last_request_time is not None:
-            return time.time() - self.last_request_time > self.timeout
+            return time.time() - self.last_request_time > self.timeout  # 上次请求时间超过timeout表明已超时
         return False
 
     def no_active_stream(self):
         if self.last_stream_time is not None and self.stream_started:
-            no_stream_duration = time.time() - self.last_stream_time
-            if no_stream_duration > self.stream_timeout:
+            no_stream_duration = time.time() - self.last_stream_time  # 当前时间减去上次流式时间就是无流式的持续时间
+            if no_stream_duration > self.stream_timeout:  # 无流式持续时间超过stream_timeout则认为没有活跃的流式计算
                 #logger.info(f"no active stream for {no_stream_duration} secs.")
                 return True
         return False
 
     def sys_prompt_init(self, msg_type):
-        if self.past_session_id == self.session_id:
+        if self.past_session_id == self.session_id:  # 如果当前会话id与上一次会话id相同，则跳过
             return
         logger.info("### sys_prompt_init ###")
 
@@ -214,7 +214,7 @@ class StreamManager:
             audio_assistant_prompt = "Your task is to be a helpful assistant using this voice pattern."
             ref_path = self.ref_path_default
 
-            
+            # 如果存在自定义选项，则使用自定义选项中的提示和参考音频
             if self.customized_options is not None:
                 audio_voice_clone_prompt = self.customized_options['voice_clone_prompt']
                 audio_assistant_prompt = self.customized_options['assistant_prompt']
@@ -225,7 +225,7 @@ class StreamManager:
                 elif self.customized_options['use_audio_prompt'] == 3:
                     ref_path = self.ref_path_male
 
-            audio_prompt, sr = librosa.load(ref_path, sr=16000, mono=True)
+            audio_prompt, sr = librosa.load(ref_path, sr=16000, mono=True)  # 加载参考音频
             sys_msg = {'role': 'user', 'content': [audio_voice_clone_prompt + "\n", audio_prompt, "\n" + audio_assistant_prompt]}
         elif msg_type == 2: #video
             voice_clone_prompt="你是一个AI助手。你能接受视频，音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。"
@@ -331,11 +331,11 @@ class StreamManager:
                 logger.info("conversation not started or still in generation, skip stream message.")
                 return "skip"
 
-            if self.flag_decode:
+            if self.flag_decode:  # 如果正在解码，则跳过
                 return "skip"
 
             try:
-                audio_bytes = base64.b64decode(audio_data)
+                audio_bytes = base64.b64decode(audio_data)  # 解码音频数据
 
                 image = None
                 if image_data is not None:
@@ -350,11 +350,11 @@ class StreamManager:
                     self.all_start_time = time.time()
                     self.sys_prompt_flag = True
                     if image_data is not None:
-                        self.sys_prompt_init(2)
+                        self.sys_prompt_init(2)  # 如果存在图像数据，则设置msg_type为2
                     else:
-                        self.sys_prompt_init(1)
+                        self.sys_prompt_init(1)  # 如果图像数据不存在，则设置msg_type为1
                     
-                self.prefill(audio_bytes, image, False)
+                self.prefill(audio_bytes, image, False)  # 将音频数据和图像数据预填
                 
                 self.vad_sequence.append(audio_bytes)
                 if len(self.vad_sequence) < self.vad_sequence_length:
@@ -362,7 +362,7 @@ class StreamManager:
                     return "done"
                 elif len(self.vad_sequence) > self.vad_sequence_length:
                     # logger.info('length of vad_sequence exceeds {}'.format(self.vad_sequence_length))
-                    self.vad_sequence.pop(0)
+                    self.vad_sequence.pop(0)  # 如果vad_sequence长度超过vad_sequence_length，则移除第一个元素
                 self.vad_check_audio_bytes(audio_bytes, image, 16000)
 
                 return "done"
@@ -390,7 +390,7 @@ class StreamManager:
 
             with open(input_audio_vad_path,"rb") as f:
                 temp_audio = f.read()
-            dur_vad, vad_audio_bytes, time_vad = vad_utils.run_vad(temp_audio, sr, self.vad_options)
+            dur_vad, vad_audio_bytes, time_vad = vad_utils.run_vad(temp_audio, sr, self.vad_options)  # vad推理
             if self.customized_options is not None:
                 vad_threshold = 1 - self.customized_options['vad_threshold']
             else:
@@ -399,10 +399,10 @@ class StreamManager:
             if self.calculate_rms(input_audio_vad_path, sr) and dur_vad > 0.4:
                 if self.stream_started == False:
                     self.vad_time = time.time()
-                    self.stream_started = True
+                    self.stream_started = True  # 流式推理开始
             elif dur_vad < vad_threshold:
                 if self.stream_started:
-                    self.stream_started = False
+                    self.stream_started = False  # 流式推理停止
                     if (time.time() - self.vad_time >= 0.6):
                         self.prefill(audio, image, True)
                         self.is_streaming_complete.set()
@@ -420,7 +420,7 @@ class StreamManager:
             if await_time > 0:
                 return False
         
-        if self.flag_decode:
+        if self.flag_decode:  # 如果正在解码，不执行预填
             return False
         
         if image is not None:
@@ -482,17 +482,17 @@ class StreamManager:
     def generate_end(self):
         self.input_audio_id += 10
         self.output_audio_id += 10
-        self.flag_decode = False
+        self.flag_decode = False  # 解码标志设置为False
         self.reset()
         return
 
     async def generate(self):
         """ return audio bytes and response text (optional) """
         if self.stop_response:
-            self.generate_end()
+            self.generate_end()  # 停止解码生成
             return
 
-        self.flag_decode = True
+        self.flag_decode = True  # 解码标志设置为True，表示正在解码
         try:
             with torch.no_grad():
                 logger.info("=== model gen start ===")
@@ -515,7 +515,7 @@ class StreamManager:
                     if self.stop_response:
                         self.generate_end()
                         return
-                    self.minicpmo_model.config.stream_input=True
+                    self.minicpmo_model.config.stream_input=True  # 设置流式输入
                     msg = {"role":"user", "content": self.cnts}
                     msgs = [msg]
                     text = ''
@@ -543,7 +543,7 @@ class StreamManager:
                                 print(f"File {output_audio_path} not found.")
                             temp_time1 = time.time()
                             print('text: ', text)
-                            yield base64.b64encode(audio_stream).decode('utf-8'), text
+                            yield base64.b64encode(audio_stream).decode('utf-8'), text  # 返回音频流和文本
                             self.speaking_time_stamp += self.cycle_wait_time
                     except Exception as e:
                         logger.error(f"Error happened during generation: {str(e)}")
@@ -581,7 +581,7 @@ class StreamManager:
                 if audio_np is not None and len(audio_np) > 1000:
                     output_audio_path = self.savedir + f'/customized_audio.wav'
                     soundfile.write(output_audio_path, audio_np, sr)
-                    self.customized_audio = output_audio_path
+                    self.customized_audio = output_audio_path  # 记录的是自定义音频的路径
                     logger.info(f"processed customized {audio_fmt} audio")
                     print(audio_np.shape, type(audio_np), sr)
             else:
@@ -601,10 +601,10 @@ class StreamManager:
 stream_manager = StreamManager()
 
 
-@app.on_event("startup")
+@app.on_event("startup")  # startup事件，在成勋启动时自动执行
 async def startup_event():
     logger.info("Starting application and activity checker")
-    asyncio.create_task(stream_manager.check_activity())
+    asyncio.create_task(stream_manager.check_activity())  # 异步启动服务的activity检查器，后台运行
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -612,11 +612,11 @@ async def shutdown_event():
 
 @app.post("/stream")
 @app.post("/api/v1/stream")
-async def stream(request: Request, uid: Optional[str] = Header(None)):
+async def stream(request: Request, uid: Optional[str] = Header(None)):  # 从请求头中获取uid
     global stream_manager
 
-    stream_manager.update_last_request_time()
-    stream_manager.update_last_stream_time()
+    stream_manager.update_last_request_time()  # 更新请求时间
+    stream_manager.update_last_stream_time()  # 更新流式推理时间
 
     if not uid:
         raise HTTPException(status_code=400, detail="Missing uid in headers")
@@ -626,18 +626,18 @@ async def stream(request: Request, uid: Optional[str] = Header(None)):
 
     try:
         # Parse JSON request
-        data = await request.json()
+        data = await request.json()  # 解析请求数据
 
         # Validate basic structure
         if not isinstance(data, dict) or "messages" not in data:
-            raise HTTPException(status_code=400, detail="Invalid request format")
+            raise HTTPException(status_code=400, detail="Invalid request format")  # 如果请求数据不是字典或不包含messages，则抛出错误
 
         # Process messages
         reason = ""
         for message in data["messages"]:
             if not isinstance(message, dict) or "role" not in message or "content" not in message:
                 raise HTTPException(status_code=400, detail="Invalid message format")
-            reason = stream_manager.process_message(message)
+            reason = stream_manager.process_message(message)  # 处理单条message，返回具体处理描述内容
 
         # Return response using uid from header
         response = {
@@ -648,17 +648,17 @@ async def stream(request: Request, uid: Optional[str] = Header(None)):
                 "finish_reason": reason
             }
         }
-        return JSONResponse(content=response, status_code=200)
+        return JSONResponse(content=response, status_code=200)  # 返回响应
 
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        raise HTTPException(status_code=400, detail="Invalid JSON")  # 如果请求数据不是JSON格式，则抛出错误
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))  # 如果发生其他异常，则抛出错误
 
 @app.websocket("/ws/stream")
 @app.websocket("/ws/api/v1/stream")
 async def websocket_stream(websocket: WebSocket,
-                           uid: Optional[str] = Query(None)):
+                           uid: Optional[str] = Query(None)):  # 从查询参数中获取uid
     global stream_manager
 
     if not uid:
@@ -666,7 +666,7 @@ async def websocket_stream(websocket: WebSocket,
         return
 
     # Accept the WebSocket connection
-    await websocket.accept()
+    await websocket.accept()  # 接受WebSocket连接
 
     #if stream_manager.uid is not None and stream_manager.uid != uid:
     #    logger.error(f"uid changed during steram: previous uid {stream_manager.uid}, new uid {uid}")
@@ -674,19 +674,19 @@ async def websocket_stream(websocket: WebSocket,
     #    return
 
     try:
-        while True:
+        while True:  # 与客户端保持连接
            # Continuously listen for incoming messages from the client
-           data = await websocket.receive_text()
+           data = await websocket.receive_text()  # 接收客户端消息
 
            # Parse JSON request
            try:
-               request_data = json.loads(data)
+               request_data = json.loads(data)  # 解析请求数据
            except json.JSONDecodeError:
                await websocket.send_json({"error": "Invalid JSON"})
                continue
 
-           stream_manager.update_last_request_time()
-           stream_manager.update_last_stream_time()
+           stream_manager.update_last_request_time()  # 更新请求时间
+           stream_manager.update_last_stream_time()  # 更新流式推理时间
 
            if stream_manager.uid is not None and stream_manager.uid != uid:
                logger.error(f"uid changed during stream: previous uid {stream_manager.uid}, new uid {uid}")
@@ -705,7 +705,7 @@ async def websocket_stream(websocket: WebSocket,
                    if not isinstance(message, dict) or "role" not in message or "content" not in message:
                        await websocket.send_json({"error": "Invalid message format"})
                        continue
-                   reason = stream_manager.process_message(message)
+                   reason = stream_manager.process_message(message)  # 处理单条message，返回具体处理描述内容
 
                # Respond with success message
                response = {
@@ -716,7 +716,7 @@ async def websocket_stream(websocket: WebSocket,
                        "finish_reason": reason,
                    },
                }
-               await websocket.send_json(response)
+               await websocket.send_json(response)  # 返回响应
            except WebSocketDisconnect:
                # Handle WebSocket disconnection
                break
@@ -732,12 +732,12 @@ async def websocket_stream(websocket: WebSocket,
         await websocket.close(code=1011, reason =f"Unexpected error: {str(e)}")
 
 
-async def generate_sse_response(request: Request, uid: Optional[str] = Header(None)):
+async def generate_sse_response(request: Request, uid: Optional[str] = Header(None)):  # 从请求头中获取uid
     global stream_manager
     print(f"uid: {uid}")
     try:
         # Wait for streaming to complete or timeout
-        while not stream_manager.is_streaming_complete.is_set():
+        while not stream_manager.is_streaming_complete.is_set():  # 当前流式生成还未完成，持续等待
             # if stream_manager.is_timed_out():
             #     yield f"data: {json.dumps({'error': 'Stream timeout'})}\n\n"
             #     return
@@ -748,8 +748,8 @@ async def generate_sse_response(request: Request, uid: Optional[str] = Header(No
         # Generate response
         try:
             yield f"event: message\n"
-            async for audio, text in stream_manager.generate():
-                if text == "stop":
+            async for audio, text in stream_manager.generate():  # 此行代码就在异步生成
+                if text == "stop":  # 如果文本为stop，则停止流式生成
                     break
                 res = {
                     "id": stream_manager.uid,
@@ -757,14 +757,14 @@ async def generate_sse_response(request: Request, uid: Optional[str] = Header(No
                     "choices": [
                         {
                             "role": "assistant",
-                            "audio": audio,
-                            "text": text,
+                            "audio": audio,  # 音频流
+                            "text": text,  # 文本
                             "finish_reason": "processing"
                         }
                     ]
                 }
                 # logger.info("generate_sse_response yield response")
-                yield f"data: {json.dumps(res)}\n\n"
+                yield f"data: {json.dumps(res)}\n\n"  # 返回响应
                 await asyncio.sleep(0)
 
         except Exception as e:
@@ -783,31 +783,31 @@ async def completions(request: Request, uid: Optional[str] = Header(None)):
 
     try:
         # if stream_manager.uid is not None and stream_manager.uid != uid:
-        if stream_manager.uid != uid:
+        if stream_manager.uid != uid:  # 检查uid是否发生变化，如果发生变化就进行会话重置
         #     stream_manager.stop_response = True
         #     logger.info(f"uid changed, reset model: previous uid {stream_manager.uid}, new uid {uid}")
-            stream_manager.session_id += 1
-            stream_manager.sys_prompt_flag = False
-            stream_manager.reset()
+            stream_manager.session_id += 1  # 会话id加1
+            stream_manager.sys_prompt_flag = False  # 相当于新建一个会话，系统提示词需要重新设置
+            stream_manager.reset()  # 所有状态重置
 
             # raise HTTPException(
             #    status_code=409,
             #    detail="User id changed, reset context."
             # )
-        stream_manager.speaking_time_stamp = 0
-        stream_manager.update_last_request_time()
-        stream_manager.uid = uid
-        stream_manager.start_conversation()
+        stream_manager.speaking_time_stamp = 0  # 说话时间戳设置为0
+        stream_manager.update_last_request_time()  # 更新请求时间
+        stream_manager.uid = uid  # 设置uid
+        stream_manager.start_conversation()  # 开始会话
 
-        data = await request.json()
+        data = await request.json()  # 解析请求数据
 
         return StreamingResponse(
-            generate_sse_response(request, uid),
-            media_type="text/event-stream",
+            generate_sse_response(request, uid),  # StreamingResponse支持同时接收同步或异步生成器
+            media_type="text/event-stream",  # 媒体类型为event-stream
             headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Transfer-Encoding": "chunked"
+                "Cache-Control": "no-cache",  # 缓存控制
+                "Connection": "keep-alive",  # 连接保持
+                "Transfer-Encoding": "chunked"  # 分块传输编码
             }
         )
     except asyncio.TimeoutError:
@@ -829,7 +829,7 @@ async def stop_response(request: Request, uid: Optional[str] = Header(None)):
     global stream_manager
     # stream_manager.session_id += 1
     logger.info(f"uid {uid}: received stop_response")
-    stream_manager.stop_response = True
+    stream_manager.stop_response = True  # 将停止标志设置为True即可，推理过程各阶段会自动判断此标志来决定是否停止
     response = {
         "id": uid,
         "choices": {
