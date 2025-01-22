@@ -256,38 +256,38 @@ class MiniCPMOProcessor(ProcessorMixin):
         return self.tokenizer.decode(result, *args[1:], **kwargs).strip()
 
     def _convert(self, input_str, max_inp_length: Optional[int] = None, **kwargs):
-        input_ids = self.tokenizer.encode(input_str, **kwargs)
+        input_ids = self.tokenizer.encode(input_str, **kwargs)  # 将输入文本编码为input_ids
         if max_inp_length is not None:
             input_ids = input_ids[:max_inp_length]
         input_ids = torch.tensor(input_ids, dtype=torch.int32)
 
         ## image bound
-        start_cond = (input_ids == self.tokenizer.im_start_id) | (input_ids == self.tokenizer.slice_start_id)
-        end_cond = (input_ids == self.tokenizer.im_end_id) | (input_ids == self.tokenizer.slice_end_id)
+        start_cond = (input_ids == self.tokenizer.im_start_id) | (input_ids == self.tokenizer.slice_start_id)  # 记录输入序列中图片开始和slice开始的位置
+        end_cond = (input_ids == self.tokenizer.im_end_id) | (input_ids == self.tokenizer.slice_end_id)  # 记录输入序列中图片结束和slice结束的位置
 
         image_start_idx = torch.where(start_cond)[0]
         image_start_idx += 1
         image_end_idx = torch.where(end_cond)[0]
 
-        valid_image_nums = max(len(image_start_idx), len(image_end_idx))
+        valid_image_nums = max(len(image_start_idx), len(image_end_idx))  # 计算有效的图片数量
 
         image_bounds = torch.hstack(
             [
                 image_start_idx[:valid_image_nums].unsqueeze(-1),
                 image_end_idx[:valid_image_nums].unsqueeze(-1),
             ]
-        )
+        )  # 将图片开始和结束位置堆叠，构建图片tokens边界
 
         ##  audio bound
-        audio_start_idx = torch.where(input_ids == self.tokenizer.audio_start_id)[0]
-        audio_end_idx = torch.where(input_ids == self.tokenizer.audio_end_id)[0]
-        assert len(audio_start_idx) == len(audio_end_idx)
-        audio_bounds = torch.hstack([(audio_start_idx + 1).unsqueeze(-1), audio_end_idx.unsqueeze(-1)])
+        audio_start_idx = torch.where(input_ids == self.tokenizer.audio_start_id)[0]  # 找到音频开始位置
+        audio_end_idx = torch.where(input_ids == self.tokenizer.audio_end_id)[0]  # 找到音频结束位置
+        assert len(audio_start_idx) == len(audio_end_idx)  # 确保音频开始和结束位置数量相同
+        audio_bounds = torch.hstack([(audio_start_idx + 1).unsqueeze(-1), audio_end_idx.unsqueeze(-1)])  # 将音频开始和结束位置堆叠，构建音频tokens边界
 
-        spk_start_idx = torch.where(input_ids == self.tokenizer.spk_start_id)[0]
-        spk_end_idx = torch.where(input_ids == self.tokenizer.spk_end_id)[0]
-        assert len(spk_start_idx) == len(spk_end_idx)
-        spk_bounds = torch.hstack([(spk_start_idx + 1).unsqueeze(-1), spk_end_idx.unsqueeze(-1)])
+        spk_start_idx = torch.where(input_ids == self.tokenizer.spk_start_id)[0]  # 找到speaker开始位置
+        spk_end_idx = torch.where(input_ids == self.tokenizer.spk_end_id)[0]  # 找到speaker结束位置
+        assert len(spk_start_idx) == len(spk_end_idx)  # 确保speaker开始和结束位置数量相同
+        spk_bounds = torch.hstack([(spk_start_idx + 1).unsqueeze(-1), spk_end_idx.unsqueeze(-1)])  # 将speaker开始和结束位置堆叠
 
         return input_ids, image_bounds, audio_bounds, spk_bounds
 
@@ -330,10 +330,10 @@ class MiniCPMOProcessor(ProcessorMixin):
         spk_bounds_list = []
 
         for index, text in enumerate(texts):
-            text_chunks = re.split(split_pattern, text)
+            text_chunks = re.split(split_pattern, text)  # 将文本按image_pattern和audio_pattern分割
 
-            image_tags = re.findall(image_pattern, text)
-            audio_tags = re.findall(audio_pattern, text)
+            image_tags = re.findall(image_pattern, text)  # 找到文本中的image_pattern
+            audio_tags = re.findall(audio_pattern, text)  # 找到文本中的audio_pattern
 
             if image_tags:
                 assert images is not None
@@ -342,19 +342,19 @@ class MiniCPMOProcessor(ProcessorMixin):
                 assert audio_phs is not None
                 assert len(audio_tags) == len(audio_phs[index])
 
-            image_id = 0
-            audio_id = 0
+            image_id = 0  # 图片id
+            audio_id = 0  # 音频id  
             for i, chunk in enumerate(text_chunks):
                 if chunk == image_tag:
                     image_placeholder = self.image_processor.get_slice_image_placeholder(
                         image_sizes[index][image_id], image_id, max_slice_nums, use_image_id
                     )
-                    image_id += 1
-                    text_chunks[i] = image_placeholder
+                    image_id += 1  # 图片id加1
+                    text_chunks[i] = image_placeholder  # 将图片placeholder替换到文本中
                 elif chunk == audio_tag:
                     audio_placeholder = audio_phs[index][audio_id]
-                    audio_id += 1
-                    text_chunks[i] = audio_placeholder
+                    audio_id += 1  # 音频id加1
+                    text_chunks[i] = audio_placeholder  # 将音频placeholder替换到文本中
 
             final_text = "".join(text_chunks)
             input_ids, image_bounds, audio_bounds, spk_bounds = self._convert(final_text, max_length, **kwargs)
@@ -364,13 +364,13 @@ class MiniCPMOProcessor(ProcessorMixin):
             audio_bounds_list.append(audio_bounds)
             spk_bounds_list.append(spk_bounds)
 
-        padded_input_ids, padding_lengths = self.pad(input_ids_list, padding_side="left")
+        padded_input_ids, padding_lengths = self.pad(input_ids_list, padding_side="left")  # 对input_ids进行填充，padding_side="left"表示在左边填充
         attention_mask = torch.ones_like(padded_input_ids, dtype=torch.bool)
         for i, length in enumerate(padding_lengths):
-            image_bounds_list[i] = image_bounds_list[i] + length
-            audio_bounds_list[i] = audio_bounds_list[i] + length
-            spk_bounds_list[i] = spk_bounds_list[i] + length
-            attention_mask[i, :length] = False
+            image_bounds_list[i] = image_bounds_list[i] + length  # 将image_bounds_list[i]加上padding_lengths[i]
+            audio_bounds_list[i] = audio_bounds_list[i] + length  # 将audio_bounds_list[i]加上padding_lengths[i]
+            spk_bounds_list[i] = spk_bounds_list[i] + length  # 将spk_bounds_list[i]加上padding_lengths[i]
+            attention_mask[i, :length] = False  # 将attention_mask[i, :length]设置为False
 
         data = {
             "input_ids": padded_input_ids,

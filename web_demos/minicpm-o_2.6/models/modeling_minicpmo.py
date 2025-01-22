@@ -903,7 +903,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             assert sampling or not stream, "if use stream mode, make sure sampling=True"
 
             if image is not None and isinstance(copy_msgs[0]["content"], str):
-                copy_msgs[0]["content"] = [image, copy_msgs[0]["content"]]
+                copy_msgs[0]["content"] = [image, copy_msgs[0]["content"]]  # 当image不为None时，将image和msgs[0]["content"]合并
 
             images = []
             audios = []

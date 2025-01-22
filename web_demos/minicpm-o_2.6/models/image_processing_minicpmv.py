@@ -283,7 +283,7 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         assert max_slice_nums > 0
         grid = self.get_sliced_grid(image_size=image_size, max_slice_nums=max_slice_nums)
 
-        image_placeholder = self.im_start_token + self.unk_token * self.image_feature_size + self.im_end_token
+        image_placeholder = self.im_start_token + self.unk_token * self.image_feature_size + self.im_end_token  # 图片placeholder
         use_image_id = self.use_image_id if use_image_id is None else bool(use_image_id)
         if use_image_id:
             final_placeholder = self.get_image_id_placeholder(image_idx) + image_placeholder
@@ -338,7 +338,7 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         patches = patches.permute(0, 1, 3, 2).reshape(image.size(0), patch_size, -1)
         return patches.numpy()
 
-    def preprocess(
+    def preprocess(  # 图片预处理函数
         self,
         images: Union[Image.Image, List[Image.Image], List[List[Image.Image]]],
         do_pad: Optional[bool] = True,
@@ -363,37 +363,37 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
                 image_sizes_list.append([])
                 tgt_sizes_list.append([])
                 continue
-            if not valid_images(_images):
+            if not valid_images(_images):  # 验证图片输入是否有效
                 raise ValueError(
                     "Invalid image type. Must be of type PIL.Image.Image, numpy.ndarray, "
                     "torch.Tensor, tf.Tensor or jax.ndarray."
                 )
 
-            _images = [self.to_pil_image(image).convert("RGB") for image in _images]
-            input_data_format = infer_channel_dimension_format(np.array(_images[0]))
+            _images = [self.to_pil_image(image).convert("RGB") for image in _images]  # 将图片转换为PIL.Image.Image类型，并转换为RGB格式
+            input_data_format = infer_channel_dimension_format(np.array(_images[0]))  # 推测图片的通道维度类型
 
             new_images = []
-            image_sizes = [image.size for image in _images]
+            image_sizes = [image.size for image in _images]  # 获取图片的尺寸
             tgt_sizes = []
             for image in _images:
-                image_patches = self.get_sliced_images(image, max_slice_nums)
-                image_patches = [to_numpy_array(image).astype(np.float32) / 255 for image in image_patches]
+                image_patches = self.get_sliced_images(image, max_slice_nums)  # 将图片分割为多个patch
+                image_patches = [to_numpy_array(image).astype(np.float32) / 255 for image in image_patches]  # 将图片转换为numpy数组，并归一化
                 image_patches = [
                     self.normalize(image=image, mean=self.mean, std=self.std, input_data_format=input_data_format)
                     for image in image_patches
-                ]
+                ]  # 对图片进行归一化处理
                 image_patches = [
                     to_channel_dimension_format(image, ChannelDimension.FIRST, input_channel_dim=input_data_format)
                     for image in image_patches
-                ]
+                ]  # 将图片的通道维度格式转换为FIRST
                 for slice_image in image_patches:
-                    new_images.append(self.reshape_by_patch(slice_image))
+                    new_images.append(self.reshape_by_patch(slice_image))  # 将图片的patch展平
                     tgt_sizes.append(
                         np.array((slice_image.shape[1] // self.patch_size, slice_image.shape[2] // self.patch_size))
                     )
 
             if tgt_sizes:
-                tgt_sizes = np.vstack(tgt_sizes)
+                tgt_sizes = np.vstack(tgt_sizes)  # 将tgt_sizes堆叠
 
             new_images_list.append(new_images)
             image_sizes_list.append(image_sizes)
